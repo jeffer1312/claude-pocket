@@ -24,7 +24,7 @@ Não usa o remote-control oficial da Anthropic, não roteia por nuvem de terceir
 - Enviar prompt para a sessão viva (`tmux send-keys`).
 - **Aprovar tool calls** (Bash/Edit) pelo celular: botões Sim/Não detectados pela caixa de permissão.
 - Interromper (Esc).
-- Auth por token; bind na interface WireGuard; TLS.
+- Auth por token; bind no IP local da LAN; TLS.
 
 **Fora (v2+):**
 - Streaming token-a-token do texto do assistant (JSONL é por-mensagem, não por-token).
@@ -36,16 +36,16 @@ Não usa o remote-control oficial da Anthropic, não roteia por nuvem de terceir
 - PC: CachyOS (Arch). Python 3.14 + `uv`. Node 24 (fnm). `tmux` **a instalar** (`paru -S tmux`).
 - Claude Code grava transcript append-only em `~/.claude/projects/<cwd-sanitizado>/<session-uuid>.jsonl` (confirmado: ~1900 arquivos, escrita em tempo real, 1 evento por linha).
 - Celular: iPhone (Safari). `EventSource` nativo; **não** suporta header custom → auth do SSE via cookie httpOnly ou `?token=` sobre TLS.
-- Rede: WireGuard puro. Interface `wg0` **não está ativa no momento** — bind do backend depende do IP do túnel quando subir.
+- Rede (v1): acesso pela **LAN, pelo IP local da máquina** (`enp1s0` → `192.168.77.23`). A VPN, quando usada, dá acesso à própria LAN, então o mesmo IP local atende tanto no Wi-Fi local quanto via VPN. Sem bind em `wg0`.
 
 ## 4. Arquitetura
 
 ```
-iPhone (Safari + WireGuard)  ── PWA Svelte ──┐
+iPhone (Safari · mesma LAN ou VPN→LAN)  ── PWA Svelte ──┐
    ├ EventSource  ◄──── SSE (message | state | tool) ────┐
    └ fetch POST  ───► input / approve / interrupt         │
                           ▼                               │
-Python API (FastAPI · uvicorn · bind wg0 · TLS · Bearer)  │
+Python API (FastAPI · uvicorn · bind LAN IP · TLS · Bearer)│
    ├ SessionRegistry  → tmux list/new/kill, mapeia → jsonl │
    ├ TranscriptTailer → tail <uuid>.jsonl → eventos chat ──┤
    ├ StateMonitor     → tmux capture-pane → estado vivo ───┤ merge → SSE
@@ -109,9 +109,9 @@ Princípio: **conteúdo vem do JSONL** (robusto, estruturado); **estado vivo vem
 **5.6 Auth + Rede**
 - **Serving same-origin**: o Caddy serve o build estático do Svelte **e** faz proxy de `/api` + `/sse` no mesmo origin. Assim o cookie de auth flui pro SSE sem header custom (que o `EventSource` não suporta).
 - Auth: token longo aleatório (config/env). Login simples → **cookie httpOnly + Secure + SameSite** (primário, usado pelo SSE). `?token=` só como fallback de debug (evitar — vaza em log).
-- `uvicorn`/Caddy faz bind **no IP do `wg0`** (`WG_BIND_IP`), nunca `0.0.0.0`; se wg estiver fora, falha fechado.
-- TLS: cert para o IP/nome do `wg0` (Caddy `tls internal` ou self-signed) — instalar root/perfil no iPhone uma vez.
-- Firewall: `ufw default deny incoming` + `ufw allow in on wg0`.
+- `uvicorn`/Caddy faz bind **no IP da LAN** (`LAN_BIND_IP`, ex. `192.168.77.23` / `enp1s0`), nunca em interface pública. Recomendado fixar o IP (reserva DHCP/estático) pra não quebrar o bind. Alternativa: bind `0.0.0.0` **com** firewall restrito à subnet local.
+- TLS: cert para o IP/nome local (Caddy `tls internal` ou self-signed) — instalar root/perfil no iPhone uma vez.
+- Firewall: `ufw default deny incoming` + liberar a porta só da subnet local (`ufw allow from 192.168.77.0/24 to any port <porta>`). **Nunca** port-forward no roteador.
 
 ### Frontend (Svelte + Vite, PWA)
 
@@ -162,7 +162,7 @@ Princípio: **conteúdo vem do JSONL** (robusto, estruturado); **estado vivo vem
 - (A) `send-keys -l` submete no input do Claude. → Spike 1.
 - (B) `capture-pane` expõe spinner + caixa de aprovação de forma estável. → Spike 2.
 - (C) JSONL é escrito por-evento em tempo real suficiente para chat fluido. → **confirmado** na sondagem.
-- (D) IP/nome do `wg0` disponível para bind + cert quando a VPN sobe. → confirmar no setup de rede.
+- (D) Bind no IP local (`192.168.77.23`/`enp1s0`) — **confirmado** disponível. Fixar IP (reserva DHCP) recomendado.
 
 ## 11. Estrutura de pastas (proposta)
 
